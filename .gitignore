@@ -23,5 +23,9 @@ dataset.zip
 dataset
 
 # Google Drive mount point (rclone)
-VGG16_model/
+
+
+# Trained models
+VGG16_model/model.keras
+VGG16_model/metrics.csv
 
