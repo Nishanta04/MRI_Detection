@@ -1,25 +1,52 @@
-# MRI Detection
+# Brain Tumor MRI Classification
 
-## Accessing a dataset in Google Drive from VS Code
+This project uses transfer learning with a VGG16 image classification model to classify brain MRI images into four dataset classes. The main workflow is in [`VGG16.ipynb`](VGG16.ipynb). [`first_notebook.ipynb`](first_notebook.ipynb) is a small notebook environment check and is not part of the model pipeline.
 
-This project runs locally, so Colab's `google.colab.drive.mount()` is not available. Use [rclone](https://rclone.org/drive/) to mount Google Drive as a local folder that the notebook can read.
+## Dataset
 
-1. Install `rclone` and FUSE for your Linux distribution.
-2. In a terminal, run `rclone config` and create a remote named `gdrive` with storage type **Google Drive**. Follow the browser sign-in/authorization prompts. rclone keeps its OAuth credentials in your home-directory config, not in this project.
-3. Check the Drive folder names with:
+The main notebook downloads the [Brain Tumor MRI Dataset](https://www.kaggle.com/datasets/masoudnickparvar/brain-tumor-mri-dataset) with `kagglehub`. It expects the downloaded dataset to contain `Training/` and `Testing/` directories, each with one subdirectory per class.
 
-   ```sh
-   rclone lsd gdrive:
-   ```
+The notebook reads the class folder names from `Training/`. Its expected four classes are **glioma**, **meningioma**, **notumor**, and **pituitary**. The dataset and pretrained VGG16 weights are downloaded when needed, so the first run requires an internet connection.
 
-4. Create the default mount point and mount the folder containing your dataset (replace `MRI Dataset` with the actual folder path in your Drive):
+## Setup
 
-   ```sh
-   mkdir -p data
-   rclone mount 'gdrive:MRI Dataset' "$PWD/data" --vfs-cache-mode full
-   ```
+Use Python in a Jupyter environment (for example, JupyterLab or the VS Code notebook extension). From the project directory, install the project and notebook dependencies:
 
-   Keep this command running while using the notebook. To disconnect, press **Ctrl+C** in that terminal. If the dataset is in a nested folder, include its path after `gdrive:`, for example `'gdrive:Datasets/MRI'`.
-5. Open `project_code.ipynb` in VS Code and run the **Google Drive dataset** cell. It sets `DATA_DIR` to the mounted folder and lists its top-level items. Use `DATA_DIR` as the root for the project's image/data loading code.
+```bash
+python -m pip install -r requirements.txt kagglehub seaborn
+```
 
-If you mount somewhere other than the project's `data/` folder, set `MRI_DATA_DIR` to that mount path before starting the notebook kernel. The local `data/` folder is excluded from Git so the dataset itself is not committed.
+`requirements.txt` includes TensorFlow, Jupyter, scikit-learn, NumPy, pandas, Matplotlib, and Pillow. TensorFlow availability depends on your Python version and platform; if installation fails, use a Python version supported by the TensorFlow release for your system.
+
+## Run the model
+
+1. Open `VGG16.ipynb` and run its cells from top to bottom.
+2. The notebook downloads the dataset, loads and shuffles the training and test images, and displays sample training images.
+3. Images are resized to **128 × 128**, brightness and contrast are randomly adjusted, and pixel values are scaled to `[0, 1]`.
+4. A VGG16 model initialized with ImageNet weights is used as the feature extractor. The last three VGG16 layers are made trainable, followed by a dense classification head. Training uses a batch size of **20**, **5 epochs**, Adam, and sparse categorical cross-entropy.
+5. The trained model and training history are saved under `VGG16_model/`:
+   - `model.keras` — trained Keras model
+   - `metrics.csv` — per-epoch training loss and accuracy
+6. The evaluation cells load the saved model and report test-set classification metrics, show a confusion matrix, and plot one-vs-rest ROC curves with AUC values for all four classes.
+
+The model output columns follow the class order returned by `os.listdir(train_dir)`. Keep the dataset class folders unchanged when running the notebook so its label encoding stays aligned with the model outputs.
+
+## Evaluation notes
+
+The notebook currently applies random brightness and contrast adjustments in `open_images()`, including when it loads the test set. This means test predictions and evaluation metrics can vary between runs. For a fixed evaluation, use deterministic preprocessing for test images (resize and normalize without random augmentation).
+
+The ROC plot uses each class as positive against the other three classes (one-vs-rest). Each legend entry includes that class's AUC.
+
+## Repository files
+
+```text
+.
+├── VGG16.ipynb        # Dataset loading, training, and evaluation workflow
+├── first_notebook.ipynb # Minimal notebook environment check
+├── requirements.txt   # Python and Jupyter dependencies
+└── README.md
+```
+
+## Intended use
+
+This is an educational machine learning project. Its predictions are not a medical diagnosis and should not be used to guide clinical decisions.
