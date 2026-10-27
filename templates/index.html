@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Brain MRI tumor classification with a trained VGG16 model.">
+  <title>NeuroScan · MRI Classifier</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🧠</text></svg>">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <div class="backdrop" aria-hidden="true">
+    <span class="orb orb-one"></span>
+    <span class="orb orb-two"></span>
+    <span class="grid"></span>
+  </div>
+
+  <header class="site-header">
+    <a class="brand" href="/">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 4.5a3 3 0 0 0-3 3 3 3 0 0 0-1.8 5.4A3 3 0 0 0 9 18.3a3 3 0 0 0 3 1.2 3 3 0 0 0 3-1.2 3 3 0 0 0 1.8-5.4A3 3 0 0 0 15 7.5a3 3 0 0 0-3-3Z"/>
+          <path d="M12 4.5v15M9.5 9.5c1 .5 1.5 1.5 1.5 2.5M14.5 12c0-1 .5-2 1.5-2.5M9 15.5c.8-.2 1.6 0 2.2.6"/>
+        </svg>
+      </span>
+      <span class="brand-text">
+        <strong>NeuroScan</strong>
+        <small>MRI Classification</small>
+      </span>
+    </a>
+    <div class="model-chip" title="Model and input configuration">
+      <span class="pulse" aria-hidden="true"></span>
+      VGG16 · {{ image_size }}px · {{ class_names|length }} classes
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="intro">
+      <p class="eyebrow">AI-assisted screening</p>
+      <h1>Classify brain MRI scans<br><span class="gradient-text">in seconds.</span></h1>
+      <p class="lede">
+        Upload a T1-weighted brain MRI image and the trained VGG16 model will
+        estimate the most likely class: glioma, meningioma, pituitary tumor, or
+        no tumor.
+      </p>
+      <ul class="feature-list">
+        <li>
+          <span class="feature-icon" aria-hidden="true">◎</span>
+          <span><strong>4-class output</strong> with per-class confidence scores</span>
+        </li>
+        <li>
+          <span class="feature-icon" aria-hidden="true">⚡</span>
+          <span><strong>Instant inference</strong> runs locally on the server</span>
+        </li>
+        <li>
+          <span class="feature-icon" aria-hidden="true">🔒</span>
+          <span><strong>Private by default</strong> uploads are never stored</span>
+        </li>
+      </ul>
+    </section>
+
+    <section class="panel" aria-labelledby="upload-heading">
+      <h2 id="upload-heading" class="sr-only">Upload an MRI image</h2>
+
+      <form id="upload-form" novalidate data-max-upload-mb="{{ max_upload_mb }}">
+        <div
+          id="dropzone"
+          class="dropzone"
+          role="button"
+          tabindex="0"
+          aria-label="Choose or drop an MRI image"
+        >
+          <input
+            id="file-input"
+            type="file"
+            name="image"
+            accept="image/jpeg,image/png,image/bmp,image/webp,image/tiff"
+            hidden
+          >
+
+          <div class="dropzone-empty" id="dropzone-empty">
+            <span class="upload-badge" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 16V4m0 0 4 4m-4-4L8 8"/>
+                <path d="M4 15v2.5A2.5 2.5 0 0 0 6.5 20h11a2.5 2.5 0 0 0 2.5-2.5V15"/>
+              </svg>
+            </span>
+            <p class="drop-title">Drop your MRI scan here</p>
+            <p class="drop-sub">or <span class="browse-link">browse files</span></p>
+            <p class="drop-hint">JPG, PNG, WEBP, BMP or TIFF · up to {{ max_upload_mb }} MB</p>
+          </div>
+
+          <div class="preview" id="preview" hidden>
+            <img id="preview-image" alt="Preview of the selected MRI scan">
+            <div class="preview-overlay">
+              <div class="preview-meta">
+                <span id="preview-name" class="preview-name"></span>
+                <span id="preview-size" class="preview-size"></span>
+              </div>
+              <button type="button" class="icon-button" id="remove-button" aria-label="Remove selected image">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                  <path d="M6 6l12 12M18 6 6 18"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <p class="form-error" id="form-error" role="alert" hidden></p>
+
+        <button type="submit" class="primary-button" id="analyze-button" disabled>
+          <span class="button-label">Analyze scan</span>
+          <span class="spinner" aria-hidden="true"></span>
+        </button>
+      </form>
+
+      <div class="status" id="status" role="status" aria-live="polite">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span id="status-text">Ready for an image</span>
+      </div>
+    </section>
+
+    <section class="results" id="results" aria-labelledby="results-heading" hidden>
+      <div class="results-top">
+        <div>
+          <p class="eyebrow">Analysis complete</p>
+          <h2 id="results-heading">Prediction</h2>
+        </div>
+        <button type="button" class="ghost-button" id="reset-button">New scan</button>
+      </div>
+
+      <div class="results-grid">
+        <div class="verdict-card">
+          <div class="confidence-ring" id="confidence-ring" style="--value: 0">
+            <div class="confidence-inner">
+              <span class="confidence-value" id="confidence-value">0%</span>
+              <span class="confidence-label">confidence</span>
+            </div>
+          </div>
+          <div class="verdict-text">
+            <span class="verdict-kicker">Most likely class</span>
+            <p class="verdict-class" id="verdict-class">—</p>
+            <span class="verdict-note" id="verdict-note">Model output for this scan</span>
+          </div>
+        </div>
+
+        <div class="probability-card">
+          <div class="probability-head">
+            <h3>Class probabilities</h3>
+            <span class="probability-hint">softmax output</span>
+          </div>
+          <ul class="probability-list" id="probability-list"></ul>
+        </div>
+      </div>
+
+      <p class="disclaimer">
+        <strong>Educational use only.</strong> This model is not a medical device
+        and its output is not a diagnosis. Always consult a qualified radiologist
+        or clinician.
+      </p>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <span>Built with Flask + TensorFlow</span>
+    <span class="footer-sep" aria-hidden="true"></span>
+    <span>Trained on the Brain Tumor MRI Dataset</span>
+  </footer>
+
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>

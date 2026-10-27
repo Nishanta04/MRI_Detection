@@ -23,6 +23,8 @@ dataset.zip
 dataset
 
 # Google Drive mount point (rclone)
+gdrive/
+gdrive/model.keras
 
 
 # Trained models
