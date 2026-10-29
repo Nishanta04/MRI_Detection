@@ -1,7 +1,8 @@
-"""Flask web app for brain MRI tumor classification with the trained VGG16 model."""
+"""Flask web app for brain MRI tumor classification using VGG16."""
 
 import io
 import os
+import time
 from pathlib import Path
 
 # Configure TensorFlow before importing it.
@@ -64,7 +65,6 @@ ALLOWED_EXTENSIONS = {
 # TensorFlow configuration
 # --------------------------------------------------
 
-# Set thread limits before TensorFlow initializes its computation pools.
 tf.config.threading.set_intra_op_parallelism_threads(1)
 tf.config.threading.set_inter_op_parallelism_threads(1)
 
@@ -89,7 +89,6 @@ if not MODEL_PATH.is_file():
 
 app.logger.info("Loading model from %s", MODEL_PATH)
 
-# The application performs inference only, so compilation is unnecessary.
 model = tf.keras.models.load_model(
     MODEL_PATH,
     compile=False,
@@ -110,12 +109,12 @@ if model.output_shape[-1] != len(CLASS_NAMES):
 # --------------------------------------------------
 
 def preprocess(image: Image.Image) -> np.ndarray:
-    """Match the training pipeline: RGB, 128x128, scaled to [0, 1]."""
+    """Convert an MRI image to the model's expected input format."""
 
     image = ImageOps.exif_transpose(image)
     image = image.convert("RGB")
 
-    # Match the nearest-neighbour resizing used during training.
+    # Match the resizing method used during training.
     image = image.resize(
         IMAGE_SIZE,
         Image.Resampling.NEAREST,
@@ -123,7 +122,7 @@ def preprocess(image: Image.Image) -> np.ndarray:
 
     array = np.asarray(image, dtype=np.float32) / 255.0
 
-    # Add the batch dimension: (128, 128, 3) -> (1, 128, 128, 3).
+    # Shape: (128, 128, 3) -> (1, 128, 128, 3)
     return np.expand_dims(array, axis=0)
 
 
@@ -170,6 +169,8 @@ def index():
 def predict():
     """Predict the tumor class for an uploaded MRI image."""
 
+    app.logger.info("PREDICT: Request received")
+
     file = request.files.get("image")
 
     error = validate_upload(file)
@@ -177,12 +178,20 @@ def predict():
     if error:
         return jsonify({"error": error}), 400
 
+    # Read and preprocess the uploaded image.
     try:
+        app.logger.info("PREDICT: Reading image")
+
         raw = file.read()
 
         with Image.open(io.BytesIO(raw)) as image:
             image.load()
             batch = preprocess(image)
+
+        app.logger.info(
+            "PREDICT: Image preprocessed; batch shape = %s",
+            batch.shape,
+        )
 
     except (UnidentifiedImageError, OSError):
         return jsonify(
@@ -194,11 +203,36 @@ def predict():
             {"error": "Image dimensions are too large to process."}
         ), 400
 
-    # Reuse the model loaded during application startup.
-    probabilities = model.predict(batch, verbose=0)[0]
+    # Run inference using the already-loaded model.
+    try:
+        app.logger.info("PREDICT: Starting model inference")
 
+        start_time = time.time()
+
+        probabilities = model(batch, training=False).numpy()[0]
+
+        elapsed_time = time.time() - start_time
+
+        app.logger.info(
+            "PREDICT: Inference completed in %.2f seconds",
+            elapsed_time,
+        )
+
+    except Exception:
+        app.logger.exception("PREDICT: Model inference failed")
+
+        return jsonify(
+            {"error": "Prediction failed while processing the image."}
+        ), 500
+
+    # Convert model output into the response format expected by the frontend.
     predicted_index = int(np.argmax(probabilities))
     predicted_class = CLASS_NAMES[predicted_index]
+
+    app.logger.info(
+        "PREDICT: Predicted class = %s",
+        predicted_class,
+    )
 
     return jsonify(
         {
@@ -246,7 +280,7 @@ def health():
 
 @app.errorhandler(RequestEntityTooLarge)
 def handle_large_file(_error):
-    """Return a JSON response when an upload exceeds the size limit."""
+    """Handle uploads that exceed the configured size limit."""
 
     return (
         jsonify(
