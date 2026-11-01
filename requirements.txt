@@ -131,3 +131,5 @@ Pillow==12.3.0
 
 # Deep learning
 tensorflow==2.21.0
+
+streamlit
