@@ -30,4 +30,7 @@ gdrive/model.keras
 # Trained models
 VGG16_model/model.keras
 VGG16_model/metrics.csv
+model_download/
+.hallmark/
+
 
