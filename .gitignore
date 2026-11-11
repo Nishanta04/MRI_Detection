@@ -27,9 +27,9 @@ gdrive/
 gdrive/model.keras
 
 
-# Trained models
-VGG16_model/model.keras
-VGG16_model/metrics.csv
+# Trained models / results (all architectures)
+*_model/
+smoke_runs/
 model_download/
 .hallmark/
 
