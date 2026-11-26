@@ -1,9 +1,11 @@
+
 """Flask web app for brain MRI tumor classification using VGG16."""
 
 import io
 import os
 import time
 from pathlib import Path
+from functools import lru_cache
 
 # Configure TensorFlow before importing it.
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
@@ -15,6 +17,7 @@ import tensorflow as tf
 from flask import Flask, jsonify, render_template, request
 from PIL import Image, ImageOps, UnidentifiedImageError
 from werkzeug.exceptions import RequestEntityTooLarge
+from huggingface_hub import hf_hub_download
 
 
 # --------------------------------------------------
@@ -23,12 +26,19 @@ from werkzeug.exceptions import RequestEntityTooLarge
 
 BASE_DIR = Path(__file__).resolve().parent
 
-MODEL_PATH = Path(
-    os.environ.get(
-        "MODEL_PATH",
-        str(BASE_DIR / "VGG16_model" / "model.keras"),
-    )
+# Hugging Face model repository
+HF_REPO_ID = os.environ.get(
+    "HF_REPO_ID",
+    "Nishanta04/brain-tumor-model",
 )
+
+HF_MODEL_FILENAME = os.environ.get(
+    "HF_MODEL_FILENAME",
+    "model.keras",
+)
+
+# Optional: override with MODEL_PATH if you want to use a local model.
+LOCAL_MODEL_PATH = os.environ.get("MODEL_PATH")
 
 # Keep this order identical to the class-folder order used during training.
 CLASS_NAMES = [
@@ -78,30 +88,64 @@ app.config["MAX_CONTENT_LENGTH"] = MAX_CONTENT_LENGTH
 
 
 # --------------------------------------------------
-# Load the trained model once
+# Download & Load the trained model
 # --------------------------------------------------
 
-if not MODEL_PATH.is_file():
-    raise FileNotFoundError(
-        f"Model not found at {MODEL_PATH}. "
-        "Set MODEL_PATH to the .keras file."
+@lru_cache(maxsize=1)
+def load_model():
+    """
+    Download the model from Hugging Face if a local model path
+    has not been explicitly configured, then load it once.
+
+    Hugging Face caches the downloaded model automatically.
+    """
+
+    if LOCAL_MODEL_PATH:
+        model_path = Path(LOCAL_MODEL_PATH)
+
+        if not model_path.is_file():
+            raise FileNotFoundError(
+                f"Local model not found: {model_path}"
+            )
+
+        app.logger.info("Loading model from local path: %s", model_path)
+
+    else:
+        app.logger.info(
+            "Downloading model from Hugging Face: %s",
+            HF_REPO_ID,
+        )
+
+        model_path = hf_hub_download(
+            repo_id=HF_REPO_ID,
+            filename=HF_MODEL_FILENAME,
+            repo_type="model",
+        )
+
+        app.logger.info("Model downloaded/cached at: %s", model_path)
+
+    app.logger.info("Loading Keras model...")
+
+    loaded_model = tf.keras.models.load_model(
+        model_path,
+        compile=False,
     )
 
-app.logger.info("Loading model from %s", MODEL_PATH)
+    app.logger.info("Model loaded successfully.")
 
-model = tf.keras.models.load_model(
-    MODEL_PATH,
-    compile=False,
-)
+    # Verify output classes against configured class names.
+    if loaded_model.output_shape[-1] != len(CLASS_NAMES):
+        raise ValueError(
+            f"Model outputs {loaded_model.output_shape[-1]} classes, "
+            f"but CLASS_NAMES contains {len(CLASS_NAMES)} entries: "
+            f"{CLASS_NAMES}"
+        )
 
-app.logger.info("Model loaded successfully.")
+    return loaded_model
 
-if model.output_shape[-1] != len(CLASS_NAMES):
-    raise ValueError(
-        f"Model outputs {model.output_shape[-1]} classes, "
-        f"but CLASS_NAMES contains {len(CLASS_NAMES)} entries: "
-        f"{CLASS_NAMES}"
-    )
+
+# Load the model once during application startup.
+model = load_model()
 
 
 # --------------------------------------------------
@@ -269,7 +313,7 @@ def health():
     return jsonify(
         {
             "status": "ok",
-            "model": MODEL_PATH.name,
+            "model": HF_MODEL_FILENAME if not LOCAL_MODEL_PATH else Path(LOCAL_MODEL_PATH).name,
         }
     )
 
