@@ -1,5 +1,6 @@
 # Streamlit App & Dependencies
 streamlit
+tensorflow
 tensorflow-cpu
 huggingface_hub
 numpy
