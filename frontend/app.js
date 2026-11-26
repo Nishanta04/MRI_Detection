@@ -30,8 +30,15 @@
   const verdictNote = document.getElementById("verdict-note");
   const probabilityList = document.getElementById("probability-list");
   const resetButton = document.getElementById("reset-button");
+  const brandLink = document.getElementById("brand-link");
+  const modelChipText = document.getElementById("model-chip-text");
+  const maxUploadLabel = document.getElementById("max-upload-label");
 
-  const maxUploadMb = Number(form.dataset.maxUploadMb) || 8;
+  const REQUEST_TIMEOUT_MS = 180000; // first request may include the model download
+
+  let maxUploadMb = Number(form.dataset.maxUploadMb) || 8;
+  let pendingId = null;
+  let requestTimer = null;
   let selectedFile = null;
   let previewUrl = null;
   let isBusy = false;
@@ -132,6 +139,119 @@
   const openPicker = () => {
     if (!isBusy && !selectedFile) fileInput.click();
   };
+
+  /* ---------- Streamlit bridge ---------- */
+
+  const streamlit = {
+    send(type, data) {
+      window.parent.postMessage({ isStreamlitMessage: true, type, ...data }, "*");
+    },
+    ready() {
+      this.send("streamlit:componentReady", { apiVersion: 1 });
+    },
+    setHeight(height) {
+      this.send("streamlit:setFrameHeight", { height });
+    },
+    setValue(value) {
+      this.send("streamlit:setComponentValue", { value, dataType: "json" });
+    },
+  };
+
+  // The page runs in an iframe whose height is set from its content. To keep the
+  // original full-height look, the body is at least as tall as the Streamlit window.
+  const syncViewportHeight = () => {
+    let viewportHeight = 0;
+    try {
+      viewportHeight = window.parent.innerHeight || 0;
+    } catch {
+      /* cross-origin parent: fall back to content height */
+    }
+    document.documentElement.style.setProperty("--viewport-height", `${viewportHeight}px`);
+  };
+
+  let lastHeight = 0;
+  const reportHeight = () => {
+    const height = Math.ceil(document.body.getBoundingClientRect().height);
+    if (height > 0 && height !== lastHeight) {
+      lastHeight = height;
+      streamlit.setHeight(height);
+    }
+  };
+
+  const applyConfig = (config) => {
+    if (!config) return;
+    if (Number(config.max_upload_mb) > 0) {
+      maxUploadMb = Number(config.max_upload_mb);
+      form.dataset.maxUploadMb = String(maxUploadMb);
+      maxUploadLabel.textContent = String(maxUploadMb);
+    }
+    if (config.image_size && config.class_count) {
+      modelChipText.textContent =
+        `${config.model || "VGG16"} · ${config.image_size}px · ${config.class_count} classes`;
+    }
+  };
+
+  const fileToBase64 = (file) =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const text = String(reader.result);
+        resolve(text.slice(text.indexOf(",") + 1));
+      };
+      reader.onerror = () => reject(reader.error || new Error("Could not read file"));
+      reader.readAsDataURL(file);
+    });
+
+  const finishBusy = () => {
+    isBusy = false;
+    analyzeButton.disabled = !selectedFile;
+    analyzeButton.classList.remove("is-loading");
+    analyzeButton.querySelector(".button-label").textContent = "Analyze scan";
+  };
+
+  const failRequest = (message) => {
+    clearTimeout(requestTimer);
+    pendingId = null;
+    showError(message);
+    setStatus("Analysis failed", "error");
+    finishBusy();
+  };
+
+  const handleResponse = (response) => {
+    if (!response || !pendingId || response.request_id !== pendingId) return;
+
+    clearTimeout(requestTimer);
+    pendingId = null;
+
+    if (!response.ok) {
+      failRequest(response.error || "The server returned an error.");
+      return;
+    }
+
+    const payload = response.data;
+    if (!payload || !Array.isArray(payload.probabilities)) {
+      failRequest("The server returned an unexpected response.");
+      return;
+    }
+
+    renderResults(payload);
+    setStatus(
+      `Prediction: ${payload.display_name} (${(payload.confidence * 100).toFixed(1)}% confidence)`,
+      "done"
+    );
+    finishBusy();
+  };
+
+  window.addEventListener("message", (event) => {
+    const data = event.data;
+    if (!data || data.type !== "streamlit:render") return;
+    const args = data.args || {};
+    applyConfig(args.config);
+    handleResponse(args.response);
+    reportHeight();
+  });
+
+  brandLink.addEventListener("click", (event) => event.preventDefault());
 
   /* ---------- Selection events ---------- */
 
@@ -279,42 +399,22 @@
     setStatus("Running model inference…", "busy");
     results.hidden = true;
 
-    const body = new FormData();
-    body.append("image", selectedFile, selectedFile.name);
-
     try {
-      const response = await fetch("/predict", { method: "POST", body });
-      let payload = null;
-      try {
-        payload = await response.json();
-      } catch {
-        payload = null;
-      }
-
-      if (!response.ok) {
-        throw new Error(payload?.error || `The server returned an error (${response.status}).`);
-      }
-      if (!payload || !Array.isArray(payload.probabilities)) {
-        throw new Error("The server returned an unexpected response.");
-      }
-
-      renderResults(payload);
-      setStatus(
-        `Prediction: ${payload.display_name} (${(payload.confidence * 100).toFixed(1)}% confidence)`,
-        "done"
+      const data = await fileToBase64(selectedFile);
+      pendingId = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      requestTimer = setTimeout(
+        () => failRequest("Could not reach the server. Make sure the Streamlit app is running."),
+        REQUEST_TIMEOUT_MS
       );
-    } catch (error) {
-      const message =
-        error instanceof TypeError
-          ? "Could not reach the server. Make sure the Flask app is running."
-          : error.message;
-      showError(message);
-      setStatus("Analysis failed", "error");
-    } finally {
-      isBusy = false;
-      analyzeButton.disabled = !selectedFile;
-      analyzeButton.classList.remove("is-loading");
-      analyzeButton.querySelector(".button-label").textContent = "Analyze scan";
+      streamlit.setValue({
+        request_id: pendingId,
+        name: selectedFile.name,
+        type: selectedFile.type,
+        size: selectedFile.size,
+        data,
+      });
+    } catch {
+      failRequest("That file could not be read. Try a different image.");
     }
   });
 
@@ -322,8 +422,28 @@
     if (isBusy) return;
     clearSelection({ focus: true });
     results.hidden = true;
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    try {
+      window.frameElement?.scrollIntoView({ behavior: "smooth", block: "start" });
+    } catch {
+      /* cross-origin parent: nothing to scroll */
+    }
   });
 
   clearSelection();
+
+  if (typeof ResizeObserver !== "undefined") {
+    new ResizeObserver(reportHeight).observe(document.body);
+  }
+  try {
+    window.parent.addEventListener("resize", () => {
+      syncViewportHeight();
+      reportHeight();
+    });
+  } catch {
+    /* cross-origin parent: nothing to listen to */
+  }
+  window.addEventListener("load", reportHeight);
+  syncViewportHeight();
+  streamlit.ready();
+  reportHeight();
 })();

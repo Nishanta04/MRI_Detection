@@ -1,11 +1,5 @@
-# Streamlit App & Dependencies
-streamlit
-tensorflow
-tensorflow-cpu
-huggingface_hub
+streamlit>=1.40
+tensorflow-cpu>=2.16
 numpy
-Pillow
-
-# Web framework (for app.py / Render if used)
-Flask==3.1.3
-gunicorn==26.2.0
+pillow
+huggingface_hub
